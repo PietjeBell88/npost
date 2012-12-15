@@ -14,11 +14,23 @@
 
 #define PORT "119"
 #define MAXDATASIZE 100
+#define STRING_BUFSIZE 1024
 
 #define NNTP_SERVER_READY_POSTING_ALLOWED 200
+#define NNTP_SERVER_READY_POSTING_PROHIBITED 201
 #define NNTP_MORE_AUTHENTICATION_REQUIRED 381
 #define NNTP_AUTHENTICATION_SUCCESSFUL 281
 #define NNTP_CONNECTION_CLOSING 205
+#define NNTP_SERVICE_TEMPORARILY_UNAVAILABLE 400
+#define NNTP_SERVICE_PERMANENTLY_UNAVAILABLE 502
+
+#define SOCKET_FAILED -1
+#define SOCKET_EMPTY  -2
+#define SOCKET_TRY_LATER -3
+#define SOCKET_UNEXPECTED_RESPONSE -4
+#define SOCKET_SEND_INCOMPLETE -5
+#define SOCKET_UNKNOWN_HOST -6
+#define SOCKET_CANT_POST -7
 
 void *get_in_addr(struct sockaddr *sa)
 {
@@ -31,26 +43,54 @@ void *get_in_addr(struct sockaddr *sa)
 
 int nntp_get_reply( int sockfd, int code )
 {
-    char buffer[256];
-    int reply = 0;
-    int n;
+    char buffer[STRING_BUFSIZE];
 
-    while( reply != code )
+    int n = recv( sockfd, buffer, 255, 0 );
+
+    // Check for socket errors (i.e. a lack of response)
+    if ( n == -1 )
+        return SOCKET_FAILED;
+
+    if ( n == 0 )
+        return SOCKET_EMPTY;
+
+    // Parse the response
+    buffer[n] = '\0';
+
+    printf( "Reply: %s\n", buffer );
+    int reply = atoi( buffer );
+    printf( "Reply Code: %d\n", reply );
+
+    if ( reply == code )
+        return 0;
+
+    if( reply == SOCKET_FAILED || reply == SOCKET_EMPTY )
     {
-        n = recv( sockfd, buffer, 255, 0 );
-        if ( n == -1 )
-            break;
-
-        buffer[n] = '\0';
-
-        printf( "Reply: %s\n", buffer );
-        int reply = atoi( buffer );
-        printf( "Reply Code: %d\n", reply );
-
-        if ( reply == code )
-            break;
+        printf( "NNTP Reply: No server response (reply=%d)\n", reply );
+        return reply;
     }
-    return n==-1?-1:0;
+
+    else if( reply == NNTP_SERVICE_TEMPORARILY_UNAVAILABLE )
+    {
+        // Usually a connection limit reached
+        printf( "NNTP Reply: Service temporarily unavailable.\n" );
+        printf( "Received: \"%s\"\n", buffer );
+        return SOCKET_TRY_LATER;
+    }
+
+    else if( reply == NNTP_SERVER_READY_POSTING_PROHIBITED ||
+             reply == NNTP_SERVICE_PERMANENTLY_UNAVAILABLE )
+    {
+        // The server info is incorrect
+        printf( "NNTP Reply: Not allowed to post to server.\n" );
+        printf( "Received: \"%s\"\n", buffer );
+        return SOCKET_CANT_POST;
+    }
+
+    // Unexpected response. Preferably do not want this to happen.
+    printf( "NNTP Reply: Unexpected Reply.\n" );
+    printf( "Received: \"%s\"\n", buffer );
+    return SOCKET_UNEXPECTED_RESPONSE;
 }
 
 int nntp_sendall( int sockfd, const char *buf, size_t len )
@@ -68,20 +108,19 @@ int nntp_sendall( int sockfd, const char *buf, size_t len )
     }
 
     if( n == -1 )
-        return -1;
+        return SOCKET_FAILED;
 
     if( total == len )
-        return 1;
+        return 0;
 
-    return 0;
+    return SOCKET_SEND_INCOMPLETE;
 }
 
 int nntp_send_command( int sockfd, int code, const char *command, ... )
 {
-    char buffer[256];
+    char buffer[STRING_BUFSIZE];
     size_t len;
     int ret;
-
 
     va_list args;
     va_start( args, command );
@@ -89,40 +128,37 @@ int nntp_send_command( int sockfd, int code, const char *command, ... )
     va_end( args );
 
     printf( "Sending command: %s\n", buffer );
+
     ret = nntp_sendall( sockfd, buffer, len );
-    if (ret >= 0)
+
+    if (ret < 0)
+        return ret;
+    else
         ret = nntp_get_reply( sockfd, code );
 
     return ret;
 }
 
-int main( int argc, char **argv )
+int socket_open( const char *hostname )
 {
     int sockfd; //, numbytes;
-    //char buf[MAXDATASIZE];
     int rv;
     char s[INET6_ADDRSTRLEN];
     char ipstr[INET6_ADDRSTRLEN];
 
     struct addrinfo hints, *servinfo, *p;
 
-    if ( argc != 4 )
-    {
-        fprintf( stderr, "Usage: sockettest newsserver username password\n" );
-        exit( 1 );
-    }
-
     memset( &hints, 0, sizeof(hints) );
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if ((rv = getaddrinfo( argv[1], PORT, &hints, &servinfo )) != 0)
+    if ((rv = getaddrinfo( hostname, PORT, &hints, &servinfo )) != 0)
     {
         fprintf( stderr, "getaddrinfo: %s\n", gai_strerror(rv) );
-        return 1;
+        return SOCKET_UNKNOWN_HOST;
     }
 
-    printf("IP addresses for %s:\n\n", argv[1]);
+    printf("IP addresses for %s:\n\n", hostname);
 
     for( p = servinfo; p != NULL; p = p->ai_next ) {
         void *addr;
@@ -165,7 +201,7 @@ int main( int argc, char **argv )
     if ( p == NULL )
     {
         fprintf( stderr, "client: failed to connect\n" );
-        return 2;
+        return SOCKET_FAILED;
     }
 
     inet_ntop( p->ai_family, get_in_addr( (struct sockaddr *)p->ai_addr ), s, sizeof(s) );
@@ -173,26 +209,97 @@ int main( int argc, char **argv )
 
     freeaddrinfo( servinfo ); // No longer need it
 
-    /* Now try to login */
-    int login_success = 0;
-    if( (login_success = nntp_get_reply( sockfd, NNTP_SERVER_READY_POSTING_ALLOWED )) == -1 )
-        exit( 1 );
-    login_success &= nntp_send_command( sockfd, NNTP_MORE_AUTHENTICATION_REQUIRED, "AUTHINFO USER %s\r\n", argv[2] );
-    login_success &= nntp_send_command( sockfd, NNTP_AUTHENTICATION_SUCCESSFUL, "AUTHINFO PASS %s\r\n", argv[3] );
+    return sockfd;
+}
 
-    // And now log off
-    nntp_send_command( sockfd, NNTP_CONNECTION_CLOSING, "QUIT\r\n" );
-    /*if( (numbytes = recv( sockfd, buf, MAXDATASIZE-1, 0 )) == -1 )
+int nntp_logon( int sockfd, const char *username, const char *password )
+{
+    int ret;
+
+    ret = nntp_get_reply( sockfd, NNTP_SERVER_READY_POSTING_ALLOWED );
+
+    if ( ret < 0 )
+        return ret;
+
+    ret = nntp_send_command( sockfd, NNTP_MORE_AUTHENTICATION_REQUIRED, "AUTHINFO USER %s\r\n", username );
+
+    if ( ret < 0 )
+        return ret;
+
+    ret = nntp_send_command( sockfd, NNTP_AUTHENTICATION_SUCCESSFUL, "AUTHINFO PASS %s\r\n", password );
+
+    if ( ret < 0 )
+        return ret;
+
+    return 0;
+}
+
+int main( int argc, char **argv )
+{
+    int *sockfd;
+    int n_sockets = 1;
+    int i = 0;
+    int ret;
+
+    if ( argc != 4 )
     {
-        perror( "recv" );
+        fprintf( stderr, "Usage: sockettest newsserver username password\n" );
         exit( 1 );
     }
 
-    buf[numbytes] = '\0';
+    sockfd = malloc( n_sockets * sizeof(int) );
 
-    printf( "client: received '%s'\n", buf );*/
+    for( i = 0; i < n_sockets; i++ )
+    {
+        printf( "*********************** SOCKET %02d *************************\n", i+1 );
+        sockfd[i] = socket_open( argv[1] );
 
-    close( sockfd );
+        // Check if the socket opened correctly
+        if ( sockfd[i] == SOCKET_UNKNOWN_HOST )
+        {
+            printf( "Error opening socket: Unknown host.\n" );
+            exit( 1 );
+        }
+        else if ( sockfd[i] <= 0 )
+            return 2;
+
+
+        // Now let's try to log onto the server
+        ret = nntp_logon( sockfd[i], argv[2], argv[3] );
+        if ( ret == SOCKET_FAILED || ret == SOCKET_EMPTY || ret == SOCKET_TRY_LATER )
+        {
+            close( sockfd[i] );
+            printf( "Failed to log onto server, trying again in 120 seconds.\n" );
+            sockfd[i] = ret;
+        }
+        else if( ret < 0 )
+        {
+            close( sockfd[i] );
+            sockfd[i] = ret;
+            printf( "Failed to log onto server, see you~.\n" );
+
+            exit( 3 );
+        }
+
+        // Logged on succesfully, let's start posting stuff!
+    }
+
+    for( i = 0; i < n_sockets; i++ )
+    {
+        printf( "*********************** SOCKET %02d *************************\n", i+1 );
+
+        if( sockfd[i] > 0)
+        {
+            // And now log off
+            int ret = nntp_send_command( sockfd[i], NNTP_CONNECTION_CLOSING, "QUIT\r\n" );
+            if ( ret < 0 )
+                printf( "The server didn't properly say goodbye... The audacity!\n" );
+
+            close( sockfd[i] );
+        }
+        else
+            printf( "Socket %d already closed.\n", i+1 );
+    }
 
     return 0;
 
