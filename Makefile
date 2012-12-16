@@ -4,7 +4,8 @@ default: npost
 
 all: default
 
-SRCS = common.c diskfile.c socket.c nntp.c npost.c
+SRCS =  common.c diskfile.c yenc.c socket.c nntp.c npost.c \
+	extern/crc32.c
 
 ifneq ($(HAVE_GETOPT_LONG),1)
 SRCS += extern/getopt.c
