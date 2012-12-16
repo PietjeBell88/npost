@@ -32,6 +32,9 @@
 #define SOCKET_UNKNOWN_HOST -6
 #define SOCKET_CANT_POST -7
 
+#define CONNECT_TRY_AGAIN_LATER -1
+#define CONNECT_FAILURE -2
+
 void *get_in_addr(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET) {
@@ -234,6 +237,53 @@ int nntp_logon( int sockfd, const char *username, const char *password )
     return 0;
 }
 
+int nntp_connect( int *sockfd, const char *hostname, const char *username, const char *password )
+{
+    *sockfd = socket_open( hostname );
+
+    // Check if the socket opened correctly
+    if ( *sockfd == SOCKET_UNKNOWN_HOST )
+    {
+        printf( "Error opening socket: Unknown host.\n" );
+        return CONNECT_FAILURE;
+    }
+    else if ( *sockfd <= 0 )
+        return CONNECT_TRY_AGAIN_LATER;
+
+
+    // Now let's try to log onto the server
+    int ret = nntp_logon( *sockfd, username, password );
+    if ( ret == SOCKET_FAILED || ret == SOCKET_EMPTY || ret == SOCKET_TRY_LATER )
+    {
+        close( *sockfd );
+        printf( "Failed to log onto server, trying again in 120 seconds.\n" );
+        *sockfd = ret;
+        return CONNECT_TRY_AGAIN_LATER;
+    }
+    else if( ret < 0 )
+    {
+        close( *sockfd );
+        *sockfd = ret;
+        printf( "Failed to log onto server, see you~.\n" );
+
+        return CONNECT_FAILURE;
+    }
+
+    return 0;
+}
+
+int nntp_logoff( int *sockfd )
+{
+    // And now log off
+    int ret = nntp_send_command( *sockfd, NNTP_CONNECTION_CLOSING, "QUIT\r\n" );
+    if ( ret < 0 )
+        printf( "The server didn't properly say goodbye... The audacity!\n" );
+
+    close( *sockfd );
+
+    return 0;
+}
+
 int main( int argc, char **argv )
 {
     int *sockfd;
@@ -252,33 +302,13 @@ int main( int argc, char **argv )
     for( i = 0; i < n_sockets; i++ )
     {
         printf( "*********************** SOCKET %02d *************************\n", i+1 );
-        sockfd[i] = socket_open( argv[1] );
 
-        // Check if the socket opened correctly
-        if ( sockfd[i] == SOCKET_UNKNOWN_HOST )
+        ret = nntp_connect( &sockfd[i], argv[1], argv[2], argv[3] );
+        if( ret == CONNECT_FAILURE )
+            return -1;
+        else if (ret == CONNECT_TRY_AGAIN_LATER )
         {
-            printf( "Error opening socket: Unknown host.\n" );
-            exit( 1 );
-        }
-        else if ( sockfd[i] <= 0 )
-            return 2;
-
-
-        // Now let's try to log onto the server
-        ret = nntp_logon( sockfd[i], argv[2], argv[3] );
-        if ( ret == SOCKET_FAILED || ret == SOCKET_EMPTY || ret == SOCKET_TRY_LATER )
-        {
-            close( sockfd[i] );
-            printf( "Failed to log onto server, trying again in 120 seconds.\n" );
-            sockfd[i] = ret;
-        }
-        else if( ret < 0 )
-        {
-            close( sockfd[i] );
-            sockfd[i] = ret;
-            printf( "Failed to log onto server, see you~.\n" );
-
-            exit( 3 );
+            // Sleep, try again later
         }
 
         // Logged on succesfully, let's start posting stuff!
@@ -289,14 +319,7 @@ int main( int argc, char **argv )
         printf( "*********************** SOCKET %02d *************************\n", i+1 );
 
         if( sockfd[i] > 0)
-        {
-            // And now log off
-            int ret = nntp_send_command( sockfd[i], NNTP_CONNECTION_CLOSING, "QUIT\r\n" );
-            if ( ret < 0 )
-                printf( "The server didn't properly say goodbye... The audacity!\n" );
-
-            close( sockfd[i] );
-        }
+            nntp_logoff( &sockfd[i] );
         else
             printf( "Socket %d already closed.\n", i+1 );
     }
