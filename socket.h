@@ -1,3 +1,6 @@
+#ifndef NPOST_SOCKET_H
+#define NPOST_SOCKET_H
+
 #define SOCKET_FAILED -1
 #define SOCKET_EMPTY  -2
 #define SOCKET_TRY_LATER -3
@@ -7,3 +10,5 @@
 #define SOCKET_CANT_POST -7
 
 int socket_open( const char *hostname, int port );
+
+#endif

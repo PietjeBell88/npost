@@ -1,3 +1,6 @@
+#ifndef NPOST_NNTP_H
+#define NPOST_NNTP_H
+
 #define NNTP_SERVER_READY_POSTING_ALLOWED 200
 #define NNTP_SERVER_READY_POSTING_PROHIBITED 201
 #define NNTP_MORE_AUTHENTICATION_REQUIRED 381
@@ -20,3 +23,5 @@ int nntp_send_command( int sockfd, int code, const char *command, ... );
 int nntp_connect( int *sockfd, const char *hostname, int port, const char *username, const char *password );
 
 int nntp_logoff( int *sockfd );
+
+#endif
