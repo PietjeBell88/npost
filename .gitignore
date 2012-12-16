@@ -1,0 +1,17 @@
+*~
+*.a
+*.s
+*.diff
+*.orig
+*.rej
+*.dll*
+*.exe
+*.def
+*.lib
+*.o
+*.so*
+
+npost
+
+*.txt
+*.hex
