@@ -4,11 +4,15 @@ default: npost
 
 all: default
 
-SRCS = socket.c nntp.c npost.c
+SRCS = common.c diskfile.c socket.c nntp.c npost.c
+
+ifneq ($(HAVE_GETOPT_LONG),1)
+SRCS += extern/getopt.c
+endif
 
 OBJS = $(SRCS:%.c=%.o)
 
-CFLAGS = -Wall -Wextra -Wshadow
+CFLAGS = -Wall -Wextra -Wshadow -std=gnu99 -g
 
 # Assuming GCC for now
 DEPMM = -MM -g0

@@ -7,6 +7,7 @@
 
 #include "nntp.h"
 #include "socket.h"
+#include "common.h"
 
 int nntp_get_reply( int sockfd, int code )
 {
@@ -60,10 +61,6 @@ int nntp_get_reply( int sockfd, int code )
     return SOCKET_UNEXPECTED_RESPONSE;
 }
 
-#define MIN(a,b) ({ \
-    a > b ? b : a; \
-})
-
 int nntp_sendall( int sockfd, const char *buf, size_t len )
 {
     size_t total = 0;        // how many bytes we've sent
@@ -86,8 +83,6 @@ int nntp_sendall( int sockfd, const char *buf, size_t len )
 
     return SOCKET_SEND_INCOMPLETE;
 }
-
-#undef MIN
 
 int nntp_send_command( int sockfd, int code, const char *command, ... )
 {
