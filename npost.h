@@ -17,8 +17,7 @@ typedef struct
     // Posting info
     char *name;
     char *email;
-    int n_newsgroups;
-    char **newsgroups;
+    char *newsgroups;
     char *comment;
 
     // Post options

@@ -18,25 +18,20 @@ size_t yenc_buffer_size( int lines )
     return ((message_size * 2) + ((message_size / YENC_LINE_LENGTH) * 4) + 512);
 }
 
-long yenc_encode( diskfile_t *df, int part, int parts, int lines, char *outbuf, size_t psize )
+long yenc_encode( char *filename, size_t filesize, crc32_t crcfile, char *inbuf,
+                  int part, int parts, int lines, size_t psize, char *outbuf )
 {
-    // Aliases
-    char *filename = df->filename;
-    size_t filesize = df->filesize;
-
     // Index
     char *pi = outbuf;
 
     // Output buffer
     size_t message_size = YENC_LINE_LENGTH * lines;
-    char *inbuf = malloc( message_size );
 
     /* and encode */
     crc32_t crc = 0;
 
     size_t pbegin = message_size * (part - 1) + 1;
     size_t pend = pbegin + psize - 1;
-    read_to_buf( df, pbegin - 1, psize, inbuf );
 
     /* The first line (or two) */
     if ( parts == 1 )
@@ -54,7 +49,7 @@ long yenc_encode( diskfile_t *df, int part, int parts, int lines, char *outbuf, 
 
     // Encoded Data
 
-    pi += yenc_data( inbuf, outbuf, psize, &crc );
+    pi += yenc_data( inbuf, pi, psize, &crc );
 
     // Footer
     if( parts == 1 )
@@ -62,7 +57,7 @@ long yenc_encode( diskfile_t *df, int part, int parts, int lines, char *outbuf, 
                 psize, crc);
     else
         pi += sprintf(pi, "=yend size=%li part=%i pcrc32=%08x crc32=%08x\r\n",
-                psize, part, crc, df->crc);
+                psize, part, crc, crcfile);
 
     return pi - outbuf;
 }

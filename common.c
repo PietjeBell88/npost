@@ -7,6 +7,8 @@
 size_t FILESIZE(char *fname)
 {
     FILE *f = fopen( fname, "r" );
+    if( f == NULL )
+        return 0;
     fseek( f, 0, SEEK_END );
     size_t size = ftell( f );
     fclose( f );

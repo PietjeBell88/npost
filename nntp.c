@@ -38,7 +38,8 @@ int nntp_get_reply( int sockfd, int code )
         return reply;
     }
 
-    else if( reply == NNTP_SERVICE_TEMPORARILY_UNAVAILABLE )
+    else if( reply == NNTP_SERVICE_TEMPORARILY_UNAVAILABLE ||
+             reply == NNTP_POSTING_FAILED )
     {
         // Usually a connection limit reached
         printf( "NNTP Reply: Service temporarily unavailable.\n" );
@@ -47,7 +48,8 @@ int nntp_get_reply( int sockfd, int code )
     }
 
     else if( reply == NNTP_SERVER_READY_POSTING_PROHIBITED ||
-             reply == NNTP_SERVICE_PERMANENTLY_UNAVAILABLE )
+             reply == NNTP_SERVICE_PERMANENTLY_UNAVAILABLE ||
+             reply == NNTP_POSTING_NOT_ALLOWED )
     {
         // The server info is incorrect
         printf( "NNTP Reply: Not allowed to post to server.\n" );
@@ -177,6 +179,30 @@ int nntp_logoff( int *sockfd )
         printf( "The server didn't properly say goodbye... The audacity!\n" );
 
     close( *sockfd );
+
+    return 0;
+}
+
+int nntp_post( int sockfd, char *buffer, size_t len )
+{
+    int ret;
+
+    ret = nntp_send_command( sockfd, NNTP_PROCEED_WITH_POST, "POST\r\n" );
+
+    if( ret == SOCKET_CANT_POST )
+        return POST_FATAL_ERROR;
+    else if( ret < 0 )
+        return POST_TRY_LATER;
+
+    // Post
+    ret = nntp_sendall( sockfd, buffer, len );
+    if( ret < 0 )
+        return POST_TRY_LATER;
+
+    // Check if we posted succesfully
+    ret = nntp_get_reply( sockfd, NNTP_ARTICLE_POSTED_OK );
+    if( ret < 0 )
+        return POST_TRY_LATER;
 
     return 0;
 }
