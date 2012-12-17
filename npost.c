@@ -73,6 +73,11 @@ void npost_param_default( npost_param_t *param )
     param->comment = NULL;
     param->lines = 5000;
     param->linelength = 128;
+
+    // Because otherwise it's hard to know if we can free() it or not
+    param->name = strdup( param->name );
+    param->email = strdup( param->email );
+    param->newsgroups = strdup( param->newsgroups );
 }
 
 int npost_parse( int argc, char **argv, npost_param_t *param )
@@ -128,12 +133,15 @@ int npost_parse( int argc, char **argv, npost_param_t *param )
                 param->threads = atoi( optarg );
                 break;
             case 'f':
+                free( param->name );
                 param->name = strdup( optarg );
                 break;
             case 'e':
+                free( param->email );
                 param->email = strdup( optarg );
                 break;
             case 'n':
+                free( param->newsgroups );
                 param->newsgroups = strdup( optarg );
                 break;
             case 'c':
@@ -254,6 +262,8 @@ size_t npost_get_part( npost_param_t *param, int filenum, int partnum, char **ou
 
     *outbuf = buffer_orig;
 
+    free( inbuf );
+
     return buffer - buffer_orig;
 }
 
@@ -313,6 +323,8 @@ int main( int argc, char **argv )
 
             ret = nntp_post( sockfd[0], buffer, bytes_to_post );
 
+            free( buffer );
+
             if( ret == POST_TRY_LATER )
             {
                 // TODO: sleep and properly reconnect/check return values
@@ -323,6 +335,7 @@ int main( int argc, char **argv )
                 exit( 2 );
         }
     }
+
 
     for( int i = 0; i < param.threads; i++ )
     {
@@ -335,6 +348,21 @@ int main( int argc, char **argv )
             printf( "Socket %d already closed.\n", i+1 );
     }
 
+    // free all the mallocs!
+    free( sockfd );
+
+
+    free( param.server );
+    free( param.username );
+    free( param.password );
+    free( param.name );
+    free( param.email );
+    free( param.newsgroups );
+    free( param.comment );
+
+    for ( int i = 0; i < param.n_input_files; i++ )
+        free( param.input_files[i].filename );
+    free( param.input_files );
     return 0;
 
 }
