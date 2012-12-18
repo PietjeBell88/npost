@@ -14,6 +14,7 @@ endif
 OBJS = $(SRCS:%.c=%.o)
 
 CFLAGS = -Wall -Wextra -Wshadow -std=gnu99 -g
+LDFLAGS = -lpthread
 
 # Assuming GCC for now
 DEPMM = -MM -g0

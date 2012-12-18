@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "npost.h"
 #include "nntp.h"
@@ -11,6 +12,8 @@
 
 #include "extern/getopt.h"
 #include "extern/crc32.h"
+
+#define SLEEP_TIME 30
 
 static void npost_print_version()
 {
@@ -250,9 +253,6 @@ size_t npost_get_part( npost_param_t *param, int filenum, int partnum, char **ou
                        param->email, param->name, param->newsgroups, subject, message_id );
 
 
-    *buffer = '\0';
-    printf( "*************** MESSAGE HEADER *********:\n%s\n", buffer_orig );
-
     size_t psize = read_to_buf( df, partnum * blocksize, blocksize, inbuf );
 
     buffer += yenc_encode( df->filename, df->filesize, df->crc, inbuf,
@@ -266,6 +266,80 @@ size_t npost_get_part( npost_param_t *param, int filenum, int partnum, char **ou
 
     return buffer - buffer_orig;
 }
+
+void * poster_thread( void *arg )
+{
+    npost_t *h = (npost_t *)arg;
+
+    // Allocate buffers
+    char *buffer;
+    int ret;
+    npost_item_t *item;
+
+    int sockfd = -1;
+
+    while( 1 )
+    {
+        // Connect when necessary
+        while( sockfd <= 0 )
+        {
+            ret = nntp_connect( &sockfd, h->param.server, h->param.port, h->param.username, h->param.password );
+            if( ret == CONNECT_FAILURE )
+                return NULL;
+            else if (ret == CONNECT_TRY_AGAIN_LATER )
+                sleep( SLEEP_TIME );
+        }
+
+        // Get an article to post
+        pthread_mutex_lock(h->mut);
+        item = h->head;
+
+        if( h->head == NULL )
+        {
+            // We're done
+            pthread_mutex_unlock(h->mut);
+            break;
+        }
+
+        h->head = h->head->next;
+        pthread_mutex_unlock(h->mut);
+
+        // Post the article
+        printf( "**** Posting! sockfd: %2d, filenum: %2d, partnum: %3d *****\n", sockfd, item->filenum, item->partnum );
+
+        size_t bytes_to_post = npost_get_part( &h->param, item->filenum, item->partnum, &buffer );
+
+        ret = nntp_post( sockfd, buffer, bytes_to_post );
+
+        free( buffer );
+
+        if( ret < 0 )
+        {
+            // Put the article back in the queue as something went wrong
+            item->next = NULL;
+            pthread_mutex_lock(h->mut);
+            h->tail->next = item;
+            pthread_mutex_unlock(h->mut);
+        }
+
+        // Depending on what went wrong, we either try again later, or kill ourselves
+        if( ret == POST_TRY_LATER )
+        {
+            nntp_logoff( &sockfd );
+            sleep( SLEEP_TIME );
+        }
+        else if ( ret == POST_FATAL_ERROR )
+            return NULL;
+
+        // If posting went succesfully, free this item
+        free( item );
+    }
+
+    nntp_logoff( &sockfd );
+
+    return NULL;
+}
+
 
 
 int main( int argc, char **argv )
@@ -289,25 +363,18 @@ int main( int argc, char **argv )
     }
     nntp_logoff( &testfd );
 
-    // Succeeded in making a single connection, now let's get going~!
-    int *sockfd;
-    sockfd = malloc( param.threads * sizeof(int) );
+    // Initialize a handle to be used by the threads
+    npost_t h;
 
-    for( int i = 0; i < param.threads; i++ )
-    {
-        ret = nntp_connect( &sockfd[i], param.server, param.port, param.username, param.password );
-        if( ret == CONNECT_FAILURE )
-            return -1;
-        else if (ret == CONNECT_TRY_AGAIN_LATER )
-        {
-            // Sleep, try again later
-        }
-    }
+    memcpy( &h, &param, sizeof(npost_param_t) );
+    h.threads = NULL;
+    h.head = NULL;
+    h.tail = NULL;
+    h.mut = malloc( sizeof(pthread_mutex_t) );
+    pthread_mutex_init( h.mut, NULL);
 
-    // Logged on succesfully, let's start posting stuff!
+    // Let's add parts to the queue!
     size_t blocksize = YENC_LINE_LENGTH * param.lines;
-
-    // TODO: posting with more than one thread
     for( int f = 0; f < param.n_input_files; f++ )
     {
         diskfile_t *df = &param.input_files[f];
@@ -316,41 +383,37 @@ int main( int argc, char **argv )
 
         for( int p = 0; p < parts; p++ )
         {
-            // Allocate buffers
-            char *buffer;
-
-            size_t bytes_to_post = npost_get_part( &param, f, p, &buffer );
-
-            ret = nntp_post( sockfd[0], buffer, bytes_to_post );
-
-            free( buffer );
-
-            if( ret == POST_TRY_LATER )
+            if( h.head == NULL )
             {
-                // TODO: sleep and properly reconnect/check return values
-                nntp_logoff( &sockfd[0] );
-//              nntp_connect()
+                h.head = malloc( sizeof(npost_item_t) );
+                h.tail = h.head;
             }
-            else if ( ret == POST_FATAL_ERROR )
-                exit( 2 );
+            else
+            {
+                h.tail->next = malloc( sizeof(npost_item_t) );
+                h.tail = h.tail->next;
+            }
+
+            h.tail->filenum = f;
+            h.tail->partnum = p;
+            h.tail->next = NULL;
         }
     }
 
+    // Initialize the threads, and give each thread its own copy of the handle
+    h.threads = malloc( param.threads * sizeof(pthread_t) );
+
+    for ( int i = 0; i < param.threads; i++ )
+        pthread_create( &h.threads[i], NULL, poster_thread, &h );
 
     for( int i = 0; i < param.threads; i++ )
-    {
-
-        printf( "*********************** SOCKET %02d *************************\n", i+1 );
-
-        if( sockfd[i] > 0)
-            nntp_logoff( &sockfd[i] );
-        else
-            printf( "Socket %d already closed.\n", i+1 );
-    }
+        pthread_join( h.threads[i], NULL );
 
     // free all the mallocs!
-    free( sockfd );
+    free( h.threads );
 
+    pthread_mutex_destroy( h.mut );
+    free( h.mut );
 
     free( param.server );
     free( param.username );

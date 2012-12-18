@@ -180,6 +180,8 @@ int nntp_logoff( int *sockfd )
 
     close( *sockfd );
 
+    *sockfd = -1;
+
     return 0;
 }
 

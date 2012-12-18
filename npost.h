@@ -1,6 +1,8 @@
 #ifndef NPOST_NPOST_H
 #define NPOST_NPOST_H
 
+#include <pthread.h>
+
 #include "diskfile.h"
 
 #define NPOST_VERSION "TESTING"
@@ -35,6 +37,22 @@ typedef struct
 
 typedef struct
 {
+    int filenum;
+    int partnum;
+
+    void *next;
+} npost_item_t;
+
+typedef struct
+{
+    // Synched
+    npost_param_t param;
+
     pthread_t *threads;
+
+    pthread_mutex_t *mut;
+
+    npost_item_t *head;
+    npost_item_t *tail;
 } npost_t;
 #endif
