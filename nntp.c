@@ -70,7 +70,7 @@ int nntp_sendall( int sockfd, const char *buf, size_t len )
     int n;
 
     while( total < len ) {
-        n = send( sockfd, buf+total, MIN(bytesleft,32768), 0 );
+        n = send( sockfd, buf+total, MIN(bytesleft,32768), MSG_NOSIGNAL );
         if ( n == -1 )
             break;
         total += n;

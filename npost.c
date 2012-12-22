@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "npost.h"
 #include "nntp.h"
@@ -363,6 +364,7 @@ int main( int argc, char **argv )
 
     // First try to make just one connection, and see if it fails
     int testfd = 0;
+    signal( SIGPIPE, SIG_IGN );
     ret = nntp_connect( &testfd, param.server, param.port, param.username, param.password );
     if( ret == CONNECT_FAILURE )
     {
