@@ -318,7 +318,14 @@ void * poster_thread( void *arg )
             // Put the article back in the queue as something went wrong
             item->next = NULL;
             pthread_mutex_lock(h->mut);
-            h->tail->next = item;
+
+            if( h->head == NULL )
+                h->head = item;
+            else
+                h->tail->next = item;
+
+            h->tail = item;
+
             pthread_mutex_unlock(h->mut);
         }
 
@@ -332,7 +339,8 @@ void * poster_thread( void *arg )
             return NULL;
 
         // If posting went succesfully, free this item
-        free( item );
+        if( ret == 0 )
+            free( item );
     }
 
     nntp_logoff( &sockfd );
