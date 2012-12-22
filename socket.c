@@ -91,5 +91,13 @@ int socket_open( const char *hostname, int port )
 
     freeaddrinfo( servinfo ); // No longer need it
 
+    // Set read and write timeout
+    struct timeval timeout;
+    timeout.tv_sec = 20;
+    timeout.tv_usec = 0;
+
+    setsockopt( sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout) );
+    setsockopt( sockfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout) );
+
     return sockfd;
 }
