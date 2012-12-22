@@ -4,6 +4,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/time.h>
+#include <errno.h>
 
 #include "npost.h"
 #include "nntp.h"
@@ -268,6 +270,33 @@ size_t npost_get_part( npost_param_t *param, int filenum, int partnum, char **ou
     return buffer - buffer_orig;
 }
 
+int conditional_sleep( npost_t *h )
+{
+    struct timespec   ts;
+    struct timeval    tp;
+
+    int ret;
+
+    gettimeofday( &tp, NULL );
+
+    /* Convert from timeval to timespec */
+    ts.tv_sec  = tp.tv_sec;
+    ts.tv_nsec = tp.tv_usec * 1000;
+    ts.tv_sec += SLEEP_TIME;
+
+    pthread_mutex_lock( h->mut );
+
+    while( h->head != NULL ) {
+        ret = pthread_cond_timedwait( h->cond_list_empty, h->mut, &ts );
+        if( ret == ETIMEDOUT || ret == 0 )
+            break;
+    }
+
+    pthread_mutex_unlock( h->mut );
+
+    return ret;
+}
+
 void * poster_thread( void *arg )
 {
     npost_t *h = (npost_t *)arg;
@@ -288,7 +317,11 @@ void * poster_thread( void *arg )
             if( ret == CONNECT_FAILURE )
                 return NULL;
             else if (ret == CONNECT_TRY_AGAIN_LATER )
-                sleep( SLEEP_TIME );
+            {
+                ret = conditional_sleep( h );
+                if( ret == 0 ) // Article list is empty
+                    return NULL;
+            }
         }
 
         // Get an article to post
@@ -298,6 +331,7 @@ void * poster_thread( void *arg )
         if( h->head == NULL )
         {
             // We're done
+            pthread_cond_broadcast( h->cond_list_empty );
             pthread_mutex_unlock(h->mut);
             break;
         }
@@ -333,8 +367,10 @@ void * poster_thread( void *arg )
         // Depending on what went wrong, we either try again later, or kill ourselves
         if( ret == POST_TRY_LATER )
         {
-            nntp_logoff( &sockfd );
-            sleep( SLEEP_TIME );
+            nntp_logoff( tid, &sockfd );
+            int retval = conditional_sleep( h );
+            if( retval == 0 ) // Article list is empty
+                return NULL;
         }
         else if ( ret == POST_FATAL_ERROR )
             return NULL;
@@ -383,6 +419,9 @@ int main( int argc, char **argv )
     h.mut = malloc( sizeof(pthread_mutex_t) );
     pthread_mutex_init( h.mut, NULL);
 
+    h.cond_list_empty = malloc( sizeof(pthread_cond_t) );
+    pthread_cond_init( h.cond_list_empty, NULL );
+
     // Let's add parts to the queue!
     size_t blocksize = YENC_LINE_LENGTH * param.lines;
     for( int f = 0; f < param.n_input_files; f++ )
@@ -424,6 +463,9 @@ int main( int argc, char **argv )
 
     pthread_mutex_destroy( h.mut );
     free( h.mut );
+
+    pthread_cond_destroy( h.cond_list_empty );
+    free( h.cond_list_empty );
 
     free( param.server );
     free( param.username );

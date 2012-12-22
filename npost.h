@@ -51,6 +51,7 @@ typedef struct
     pthread_t *threads;
 
     pthread_mutex_t *mut;
+    pthread_cond_t *cond_list_empty;
 
     npost_item_t *head;
     npost_item_t *tail;
