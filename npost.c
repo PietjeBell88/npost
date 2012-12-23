@@ -80,7 +80,6 @@ void npost_param_default( npost_param_t *param )
     param->newsgroups = "alt.binaries.test";
     param->comment = NULL;
     param->lines = 5000;
-    param->linelength = 128;
     param->split = 0;
 
     // Because otherwise it's hard to know if we can free() it or not

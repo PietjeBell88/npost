@@ -25,7 +25,6 @@ typedef struct
     // Post options
     int threads;
     int lines;
-    int linelength;
 
     // The input files
     int n_input_files;
