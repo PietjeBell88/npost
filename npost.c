@@ -45,6 +45,7 @@ static void help( npost_param_t *param )
     printf( "  -n, --newsgroup <string,...>    Comma seperated newsgroups to post to. [%s]\n", param->newsgroups );
     printf( "  -c, --comment <string>,         Subject of the post. Default is equal to filename.\n" );
     printf( "  -l, --lines <int>,              Amount of lines to post with [%d]\n", param->lines ) ;
+    printf( "  -x, --split <long>,             Split each input file every <long> bytes. [%ld]\n", param->split );
 }
 
 static char short_options[] = "c:e:f:hl:n:o:p:s:t:u:y:";
@@ -62,6 +63,7 @@ static struct option long_options[] =
     { "newsgroup",  required_argument, NULL, 'n' },
     { "comment",    required_argument, NULL, 'c' },
     { "lines",      required_argument, NULL, 'l' },
+    { "split",      required_argument, NULL, 'x' },
     {0, 0, 0, 0}
 };
 
@@ -79,6 +81,7 @@ void npost_param_default( npost_param_t *param )
     param->comment = NULL;
     param->lines = 5000;
     param->linelength = 128;
+    param->split = 0;
 
     // Because otherwise it's hard to know if we can free() it or not
     param->name = strdup( param->name );
@@ -156,6 +159,32 @@ int npost_parse( int argc, char **argv, npost_param_t *param )
             case 'l':
                 param->lines = atoi( optarg );
                 break;
+            case 'x':
+                param->split = atol( optarg );
+                switch( optarg[strlen(optarg) - 1] )
+                {
+                    case 'K':
+                        param->split *= 1000;
+                        break;
+                    case 'k':
+                        param->split <<= 10;
+                        break;
+                    case 'M':
+                        param->split *= 1000000;
+                        break;
+                    case 'm':
+                        param->split <<= 20;
+                        break;
+                    case 'G':
+                        param->split *= 1000000000;
+                        break;
+                    case 'g':
+                        param->split <<= 30;
+                        break;
+                    default:
+                        break;
+                }
+                break;
             default:
                 printf( "Error: getopt returned character code 0%o = %c\n", c, c );
                 return -1;
@@ -198,24 +227,32 @@ int npost_parse( int argc, char **argv, npost_param_t *param )
         b_error |= 1;
     }
 
+    if( param->split != 0 && param->split < (1 << 10) )
+    {
+        printf( "--split: Can't split smaller than 1kB.\n" );
+        b_error |= 1;
+    }
+
     if( b_error )
         return -1;
 
     if ( param->threads < 1 )
         param->threads = 1;
 
+    // First open all files, check if they exist, and get their filesize
     param->input_files = malloc( param->n_input_files * sizeof(diskfile_t) );
 
     for ( int i = 0; i < param->n_input_files; i++ )
     {
         diskfile_t *df = &param->input_files[i];
 
-        df->filename = strdup( argv[optind++] );
-        df->offset   = 0; //offsets[i];
-        df->filesize = FILESIZE( df->filename );
+        df->filename_in = strdup( argv[optind++] );
+        df->filename_out = strdup( df->filename_in );
+        df->offset   = 0;
+        df->filesize = FILESIZE( df->filename_in );
         if( df->filesize == 0 )
         {
-            printf( "Error opening file: %s\n", df->filename );
+            printf( "Error opening file: %s\n", df->filename_in );
             return -1;
         }
         df->filesize = df->filesize - df->offset;
@@ -223,7 +260,59 @@ int npost_parse( int argc, char **argv, npost_param_t *param )
 
     // Set the comment to be the filename if the comment was unset
     if( param->comment == NULL && param->n_input_files == 1 )
-        param->comment = strdup( param->input_files[0].filename );
+        param->comment = strdup( param->input_files[0].filename_in );
+
+    // Now count how many virtual diskfiles we need if we split
+    if( param->split )
+    {
+        param->n_split_files = 0;
+
+        for( int i = 0; i < param->n_input_files; i++ )
+        {
+            diskfile_t *df = &param->input_files[i];
+            param->n_split_files += (df->filesize + param->split - 1) / param->split;
+        }
+    }
+    else
+        param->n_split_files = param->n_input_files;
+
+    // Generate the list of virtual files
+    param->split_files = malloc( param->n_split_files * sizeof(diskfile_t) );
+
+    for( int i = 0, t = 0; i < param->n_input_files; i++ )
+    {
+        diskfile_t *df_in  = &param->input_files[i];
+
+        // Else we start splitting~:
+        char split_fnformat[100];
+        int split_parts    = param->split ? (df_in->filesize + param->split - 1) / param->split : 1;
+        int split_digits   = snprintf( 0, 0, "%d", split_parts );
+        int split_fnlength = strlen( df_in->filename_out ) + split_digits + 2; // one dot, and one terminating zero
+
+        sprintf( split_fnformat, "%%s.%%0%dd", split_digits );
+
+        for( int j = 0; j < split_parts; j++ )
+        {
+            diskfile_t *df_out = &param->split_files[t++];
+
+            // If we don't have to split, just copy stuff
+            if( !param->split || split_parts == 1 )
+            {
+                memcpy( df_out, df_in, sizeof(diskfile_t) );
+                df_out->filename_in = strdup( df_in->filename_in );
+                df_out->filename_out = strdup( df_in->filename_out );
+                continue;
+            }
+
+            df_out->filename_in = strdup( df_in->filename_in );
+            df_out->filename_out = malloc( split_fnlength );
+            snprintf( df_out->filename_out, split_fnlength, split_fnformat, df_in->filename_out, j+1 );
+
+            df_out->offset = j * param->split;
+
+            df_out->filesize = MIN(df_in->filesize - df_out->offset, param->split);
+        }
+    }
 
     return 0;
 }
@@ -231,7 +320,7 @@ int npost_parse( int argc, char **argv, npost_param_t *param )
 size_t npost_get_part( npost_param_t *param, int filenum, int partnum, char **outbuf )
 {
     // Alias
-    diskfile_t *df = &param->input_files[filenum];
+    diskfile_t *df = &param->split_files[filenum];
     size_t blocksize = YENC_LINE_LENGTH * param->lines;
     int parts = (df->filesize + blocksize - 1) / blocksize;
 
@@ -244,7 +333,7 @@ size_t npost_get_part( npost_param_t *param, int filenum, int partnum, char **ou
     char subject[256];
 
     sprintf( subject, "%s - [%d/%d] - \"%s\" yEnc (%d/%d)",
-             param->comment, filenum+1, param->n_input_files, df->filename, partnum+1, parts);
+             param->comment, filenum+1, param->n_split_files, df->filename_out, partnum+1, parts);
 
     // Generate the message id
     char message_id[1024];
@@ -258,7 +347,7 @@ size_t npost_get_part( npost_param_t *param, int filenum, int partnum, char **ou
 
     size_t psize = read_to_buf( df, partnum * blocksize, blocksize, inbuf );
 
-    buffer += yenc_encode( df->filename, df->filesize, df->crc, inbuf,
+    buffer += yenc_encode( df->filename_out, df->filesize, df->crc, inbuf,
                            partnum+1, parts, param->lines, psize, buffer );
 
     buffer += sprintf( buffer, "\r\n.\r\n" );
@@ -385,7 +474,19 @@ void * poster_thread( void *arg )
     return NULL;
 }
 
+void crc32_file( diskfile_t *df )
+{
+    char buf[1L << 15];
+    df->crc = 0;
+    size_t bytes_read;
+    size_t offset;
 
+    while( (bytes_read = read_to_buf( df, offset, sizeof(buf), buf )) > 0 )
+    {
+        crc32( buf, bytes_read, &df->crc );
+        offset += bytes_read;
+    }
+}
 
 int main( int argc, char **argv )
 {
@@ -424,11 +525,11 @@ int main( int argc, char **argv )
 
     // Let's add parts to the queue!
     size_t blocksize = YENC_LINE_LENGTH * param.lines;
-    for( int f = 0; f < param.n_input_files; f++ )
+    for( int f = 0; f < param.n_split_files; f++ )
     {
-        diskfile_t *df = &param.input_files[f];
-        crc32_file( df->filename, &df->crc );
-        int parts = (param.input_files[f].filesize + blocksize - 1) / blocksize;
+        diskfile_t *df = &param.split_files[f];
+        crc32_file( df );
+        int parts = (param.split_files[f].filesize + blocksize - 1) / blocksize;
 
         for( int p = 0; p < parts; p++ )
         {
@@ -476,8 +577,19 @@ int main( int argc, char **argv )
     free( param.comment );
 
     for ( int i = 0; i < param.n_input_files; i++ )
-        free( param.input_files[i].filename );
+    {
+        free( param.input_files[i].filename_in );
+        free( param.input_files[i].filename_out );
+    }
     free( param.input_files );
+
+    for ( int i = 0; i < param.n_split_files; i++ )
+    {
+        free( param.split_files[i].filename_in );
+        free( param.split_files[i].filename_out );
+    }
+    free( param.split_files );
+
     return 0;
 
 }

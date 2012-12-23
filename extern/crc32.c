@@ -23,16 +23,3 @@ void crc32(const void *data, size_t n_bytes, uint32_t* crc) {
   for(size_t i = 0; i < n_bytes; ++i)
     *crc = table[(uint8_t)*crc ^ ((uint8_t*)data)[i]] ^ *crc >> 8;
 }
-
-void crc32_file(char *filename, uint32_t *crc)
-{
-    FILE *fp;
-    char buf[1L << 15];
-
-    if((fp = fopen(filename, "rb"))) {
-        *crc = 0;
-        while(!feof(fp) && !ferror(fp))
-            crc32(buf, fread(buf, 1, sizeof(buf), fp), crc);
-        fclose(fp);
-    }
-}

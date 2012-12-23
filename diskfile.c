@@ -7,7 +7,7 @@
 
 size_t read_to_buf( diskfile_t *file, size_t offset, size_t length, char *buf )
 {
-    FILE *fp = fopen( file->filename, "rb" );
+    FILE *fp = fopen( file->filename_in, "rb" );
     fseek( fp, file->offset + offset, 0 );
     memset( buf, 0, length );
 

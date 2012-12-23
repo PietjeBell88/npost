@@ -31,6 +31,10 @@ typedef struct
     int n_input_files;
     diskfile_t *input_files;
 
+    size_t split;
+    int n_split_files;
+    diskfile_t *split_files;
+
     // free() callback
     void (*param_free)( void * );
 } npost_param_t;

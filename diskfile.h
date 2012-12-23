@@ -8,7 +8,8 @@
 
 typedef struct
 {
-    char *filename;
+    char *filename_in;
+    char *filename_out;
 
     size_t offset;     // When splitting
     size_t filesize;   // File size
